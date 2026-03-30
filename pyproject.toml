@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "invarians"
+version = "0.1.0"
+description = "Python SDK for the Invarians Oracle — cross-layer blockchain infrastructure attestations"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["blockchain", "oracle", "infrastructure", "ethereum", "arbitrum", "l2", "agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+
+# No forced HTTP library — user chooses requests or httpx
+dependencies = []
+
+[project.optional-dependencies]
+requests = ["requests>=2.28"]
+httpx    = ["httpx>=0.24"]
+dev      = ["pytest>=7", "pytest-httpx", "responses", "mypy"]
+
+[project.urls]
+Homepage    = "https://invarians.com"
+API-docs    = "https://invarians.com/developers.html"
+Source      = "https://github.com/invarians/invarians-py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["invarians"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = false
+ignore_missing_imports = true
