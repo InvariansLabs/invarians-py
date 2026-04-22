@@ -4,11 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "invarians"
-version = "0.1.0"
-description = "Python SDK for the Invarians Oracle — cross-layer blockchain infrastructure attestations"
+version = "0.2.1"
+description = "Python SDK for the Invarians panel API — direction-agnostic cross-chain attestations (L1, L2, bridges) for autonomous agents"
+readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-keywords = ["blockchain", "oracle", "infrastructure", "ethereum", "arbitrum", "l2", "agent"]
+keywords = ["blockchain", "execution-context", "infrastructure", "ethereum", "arbitrum", "autonomous-agents", "attestation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -32,7 +33,7 @@ dev      = ["pytest>=7", "pytest-httpx", "responses", "mypy"]
 [project.urls]
 Homepage    = "https://invarians.com"
 API-docs    = "https://invarians.com/developers.html"
-Source      = "https://github.com/invarians/invarians-py"
+Source      = "https://github.com/InvariansLabs/invarians-py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["invarians"]

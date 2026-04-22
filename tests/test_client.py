@@ -44,9 +44,9 @@ def test_solana_tau_calibrated_but_pi_not():
     assert meta.tau_calibrated is True
     assert meta.pi_calibrated is False
 
-def test_arbitrum_medium_confidence():
+def test_arbitrum_low_confidence():
     meta = chain_meta("arbitrum")
-    assert meta.calibration_confidence == "MEDIUM"
+    assert meta.calibration_confidence == "LOW"
 
 def test_unknown_chain_returns_none_confidence():
     meta = chain_meta("unknown_chain")

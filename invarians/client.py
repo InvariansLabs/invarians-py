@@ -24,6 +24,8 @@ from .models import (
     L1Attestation, L2Attestation, ExecutionContextAttestation,
     StructuralSignals, ExecutionProfile, BeaconData, ProofOfExecutionContext,
     chain_meta, stale_action,
+    # Panel API v1.0 (2026-04-20)
+    PanelResponse, L1Entry, L2Entry, BridgeEntry, Coverage, SignedExecutionContext,
 )
 
 logger = logging.getLogger("invarians")
@@ -78,60 +80,93 @@ class InvariansClient:
     # Public API
     # ──────────────────────────────────────────────────────────
 
-    def get_l1(self, chain: str) -> L1Attestation:
+    def get_panel(
+        self,
+        chains: Optional[list] = None,
+        bridges: Optional[list] = None,
+    ) -> PanelResponse:
         """
-        Fetch L1 chain state.
+        Fetch the full attestation panel (L1 states, L2 states, bridge states).
+
+        The panel is direction-agnostic: the agent composes its routes
+        client-side by picking L1/L2/bridge items from the panel.
 
         Args:
-            chain: 'ethereum' | 'polygon' | 'solana' | 'avalanche'
+            chains:  Optional filter — e.g. ['ethereum','arbitrum','base']
+            bridges: Optional filter by bridge type — e.g. ['native'] or ['native','ccip']
 
         Returns:
-            L1Attestation with regime (S1D1/S1D2/S2D1/S2D2),
-            structural signals, demand profile, and stale action.
+            PanelResponse with l1[], l2[], bridges[], coverage, and
+            signed_execution_context (payload_hash + HMAC signature + anchor slot).
         """
-        data = self._get(f"/{chain}")
-        return self._parse_l1(data, chain)
+        params: dict = {}
+        if chains:
+            params["chains"] = ",".join(chains)
+        if bridges:
+            params["bridges"] = ",".join(bridges)
+        data = self._get("/panel", params=params or None)
+        return self._parse_panel(data)
+
+    def verify_panel(self, panel_payload: dict, signature: str) -> bool:
+        """
+        Verify the HMAC signature of a panel payload.
+
+        The verify endpoint recomputes the HMAC over the canonical JSON of the
+        panel payload (with `signed_execution_context` stripped) and compares.
+
+        Args:
+            panel_payload: The full panel dict as received from /panel.
+                           The `signed_execution_context` field is stripped
+                           server-side before recomputing the HMAC.
+            signature:     The signature string to verify, e.g.
+                           "hmac-sha256:{hex}" from payload's signed_execution_context.
+
+        Returns:
+            True if the signature matches.
+        """
+        resp = self._post("/verify", json={"payload": panel_payload, "signature": signature})
+        return resp.get("valid", False)
+
+    # ── Deprecated API (410 Gone since 2026-04-20) ─────────────
+    def get_l1(self, chain: str) -> L1Attestation:
+        """DEPRECATED — endpoint removed 2026-04-20. Use ``get_panel()``.
+
+        The backend now returns 410 Gone. Migrate to:
+
+            panel = client.get_panel()
+            eth   = panel.l1_by_chain('ethereum')
+        """
+        raise NotImplementedError(
+            "get_l1() is deprecated since 2026-04-20. "
+            "Use client.get_panel() and panel.l1_by_chain(chain) instead."
+        )
 
     def get_l2(self, chain: str) -> L2Attestation:
-        """
-        Fetch L2 chain state.
-
-        Args:
-            chain: 'arbitrum' | 'base' | 'optimism'
-
-        Returns:
-            L2Attestation with regime and signal quality metadata.
-        """
-        data = self._get(f"/l2/{chain}")
-        return self._parse_l2(data, chain)
+        """DEPRECATED — endpoint removed 2026-04-20. Use ``get_panel()``."""
+        raise NotImplementedError(
+            "get_l2() is deprecated since 2026-04-20. "
+            "Use client.get_panel() and panel.l2_by_chain(chain) instead."
+        )
 
     def get_execution_context(self, l1: str = "ethereum", l2: str = "arbitrum") -> ExecutionContextAttestation:
-        """
-        Fetch composite L1×L2 execution context.
+        """DEPRECATED — endpoint removed 2026-04-20. Compose routes client-side.
 
-        Args:
-            l1: L1 chain (default: 'ethereum')
-            l2: L2 chain (default: 'arbitrum')
-
-        Returns:
-            ExecutionContextAttestation with proof_of_execution_context
-            (l1_regime × l2_regime × bridge_state) and per-chain details.
+        Rationale: the API no longer exposes directional routes. A bridge is
+        stressed (or not) regardless of flow direction. The agent picks L1, L2,
+        and bridge states from the panel and composes its own route.
         """
-        data = self._get("/execution-context", params={"from": l1, "to": l2})
-        return self._parse_execution_context(data)
+        raise NotImplementedError(
+            "get_execution_context() is deprecated since 2026-04-20. "
+            "The API no longer exposes directional routes. "
+            "Use client.get_panel() and compose routes client-side from l1[], l2[], bridges[]."
+        )
 
     def verify(self, attestation_payload: dict) -> bool:
-        """
-        Verify an attestation signature via the oracle /verify endpoint.
-
-        Args:
-            attestation_payload: The full attestation dict as received from the API.
-
-        Returns:
-            True if signature is valid and attestation is not expired.
-        """
-        resp = self._post("/verify", json=attestation_payload)
-        return resp.get("valid", False)
+        """DEPRECATED — use ``verify_panel(panel_payload, signature)``."""
+        raise NotImplementedError(
+            "verify() is deprecated since 2026-04-20. "
+            "Use client.verify_panel(panel_payload, signature) for the new panel API."
+        )
 
     # ──────────────────────────────────────────────────────────
     # HTTP layer
@@ -247,7 +282,7 @@ class InvariansClient:
         attestation = L2Attestation(
             chain=data.get("chain", chain),
             oracle_status=data.get("oracle_status", "OK"),
-            regime=data.get("regime", data.get("state", "S1D1")),
+            regime=data.get("regime", data.get("l2_regime", data.get("state", "S1D1"))),
             structural=StructuralSignals(
                 rhythm_ratio=struct.get("rhythm_ratio", 0.0),
                 continuity_ratio=struct.get("continuity_ratio", 0.0),
@@ -256,11 +291,18 @@ class InvariansClient:
                 index_a=profile.get("index_a", 0.0),
                 index_b=profile.get("index_b", 0.0),
                 index_c=profile.get("index_c", 0.0),
+                index_d=profile.get("index_d"),
+                index_e=profile.get("index_e"),
+                index_f=profile.get("index_f"),
+                index_g=profile.get("index_g"),
+                index_h=profile.get("index_h"),
             ),
             data_age_seconds=data.get("data_age_seconds", 0.0),
             issued_at=data.get("issued_at", ""),
             expires_at=data.get("expires_at", ""),
             signature=data.get("signature", ""),
+            tau_computed_at=data.get("tau_computed_at"),
+            pi_computed_at=data.get("pi_computed_at"),
             meta=chain_meta(chain),
         )
 
@@ -311,3 +353,114 @@ class InvariansClient:
     def _apply_stale_policy(self, oracle_status: str, data_age_seconds: float, chain: str):
         if self._stale_policy == "raise" and oracle_status == "STALE":
             raise StaleError(chain, data_age_seconds)
+
+    # ──────────────────────────────────────────────────────────
+    # Panel API parser (v1.0 — 2026-04-20)
+    # ──────────────────────────────────────────────────────────
+
+    def _parse_panel(self, data: dict) -> PanelResponse:
+        panel_raw = data.get("panel", {})
+
+        def parse_l1(raw: dict) -> L1Entry:
+            struct = raw.get("structural", {}) or {}
+            profile = raw.get("execution_profile", {}) or {}
+            chain = raw.get("chain", "")
+            return L1Entry(
+                chain=chain,
+                regime=raw.get("regime"),
+                status=raw.get("status", "UNAVAILABLE"),
+                computed_at=raw.get("computed_at"),
+                window=raw.get("window", "1h"),
+                divergence_index=raw.get("divergence_index"),
+                structural=StructuralSignals(
+                    rhythm_ratio=struct.get("rhythm_ratio") or 0.0,
+                    continuity_ratio=struct.get("continuity_ratio") or 0.0,
+                ),
+                execution_profile=ExecutionProfile(
+                    index_a=profile.get("index_a") or 0.0,
+                    index_b=profile.get("index_b") or 0.0,
+                    index_c=profile.get("index_c") or 0.0,
+                ),
+                meta=chain_meta(chain) if chain else None,
+            )
+
+        def parse_l2(raw: dict) -> L2Entry:
+            struct = raw.get("structural", {}) or {}
+            profile = raw.get("execution_profile", {}) or {}
+            chain = raw.get("chain", "")
+            return L2Entry(
+                chain=chain,
+                regime=raw.get("regime"),
+                status=raw.get("status", "UNAVAILABLE"),
+                computed_at=raw.get("computed_at"),
+                window=raw.get("window", "1h"),
+                structural=StructuralSignals(
+                    rhythm_ratio=struct.get("rhythm_ratio") or 0.0,
+                    continuity_ratio=struct.get("continuity_ratio") or 0.0,
+                ),
+                execution_profile=ExecutionProfile(
+                    index_a=profile.get("index_a") or 0.0,
+                    index_b=profile.get("index_b") or 0.0,
+                    index_c=profile.get("index_c") or 0.0,
+                    index_d=profile.get("index_d"),
+                    index_e=profile.get("index_e"),
+                    index_f=profile.get("index_f"),
+                    index_g=profile.get("index_g"),
+                    index_h=profile.get("index_h"),
+                ),
+                meta=chain_meta(chain) if chain else None,
+            )
+
+        def parse_bridge(raw: dict) -> BridgeEntry:
+            return BridgeEntry(
+                id=raw.get("id", ""),
+                endpoints=list(raw.get("endpoints", []) or []),
+                type=raw.get("type", "native"),
+                state=raw.get("state"),
+                calibrated=bool(raw.get("calibrated", False)),
+                status=raw.get("status", "UNAVAILABLE"),
+                observed_at=raw.get("observed_at"),
+                window=raw.get("window", "10m"),
+                last_batch_age_seconds=raw.get("last_batch_age_seconds"),
+                # CCIP raw signals (present in P2+ for type=="ccip")
+                last_sequence_advance_seconds=raw.get("last_sequence_advance_seconds"),
+                sequence_gap=raw.get("sequence_gap"),
+                commit_latency_p90_s=raw.get("commit_latency_p90_s"),
+                execute_latency_p90_s=raw.get("execute_latency_p90_s"),
+                total_latency_p90_s=raw.get("total_latency_p90_s"),
+                rmn_cursed=raw.get("rmn_cursed"),
+                # CCTP raw signals (present in P2+ for type=="cctp")
+                attestation_latency_p90_s=raw.get("attestation_latency_p90_s"),
+                attestation_latency_p99_s=raw.get("attestation_latency_p99_s"),
+                attestation_success_rate_1h=raw.get("attestation_success_rate_1h"),
+                circle_api_status=raw.get("circle_api_status"),
+            )
+
+        cov_raw = data.get("coverage", {}) or {}
+        coverage = Coverage(
+            l1_chains=list(cov_raw.get("l1_chains", []) or []),
+            l2_chains=list(cov_raw.get("l2_chains", []) or []),
+            bridges_native=int(cov_raw.get("bridges_native", 0) or 0),
+            bridges_ccip=int(cov_raw.get("bridges_ccip", 0) or 0),
+            bridges_cctp=int(cov_raw.get("bridges_cctp", 0) or 0),
+            methodology_url=cov_raw.get("methodology_url", ""),
+        )
+
+        sec_raw = data.get("signed_execution_context", {}) or {}
+        sec = SignedExecutionContext(
+            payload_hash=sec_raw.get("payload_hash", ""),
+            signature=sec_raw.get("signature", ""),
+            key_id=sec_raw.get("key_id", "invarians-v1"),
+            anchor=sec_raw.get("anchor"),
+        )
+
+        return PanelResponse(
+            version=data.get("version", "1.0.0"),
+            oracle_status=data.get("oracle_status", "OK"),
+            issued_at=data.get("issued_at", ""),
+            l1=[parse_l1(e) for e in panel_raw.get("l1", [])],
+            l2=[parse_l2(e) for e in panel_raw.get("l2", [])],
+            bridges=[parse_bridge(b) for b in panel_raw.get("bridges", [])],
+            coverage=coverage,
+            signed_execution_context=sec,
+        )
