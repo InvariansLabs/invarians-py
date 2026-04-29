@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "invarians"
-version = "0.2.1"
+version = "0.3.0"
 description = "Python SDK for the Invarians panel API — direction-agnostic cross-chain attestations (L1, L2, bridges) for autonomous agents"
 readme = "README.md"
 requires-python = ">=3.9"

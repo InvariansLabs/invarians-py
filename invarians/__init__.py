@@ -36,6 +36,8 @@ from .models import (
     STALE_THRESHOLD_S,
     STALE_WAIT_S,
     StructuralSignals,
+    StructuralSlow,
+    Shifts,
     ExecutionProfile,
     # Panel API v1.0 (2026-04-20)
     PanelResponse,
@@ -54,7 +56,7 @@ from .exceptions import (
     ServerError,
 )
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __all__ = [
     "InvariansClient",
     # Panel API
@@ -66,6 +68,8 @@ __all__ = [
     "SignedExecutionContext",
     # Shared
     "StructuralSignals",
+    "StructuralSlow",
+    "Shifts",
     "ExecutionProfile",
     "ChainMeta",
     "chain_meta",

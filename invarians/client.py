@@ -22,7 +22,7 @@ except ImportError:
 from .exceptions import AuthError, NotFoundError, RateLimitError, ServerError, StaleError
 from .models import (
     L1Attestation, L2Attestation, ExecutionContextAttestation,
-    StructuralSignals, ExecutionProfile, BeaconData, ProofOfExecutionContext,
+    StructuralSignals, StructuralSlow, Shifts, ExecutionProfile, BeaconData, ProofOfExecutionContext,
     chain_meta, stale_action,
     # Panel API v1.0 (2026-04-20)
     PanelResponse, L1Entry, L2Entry, BridgeEntry, Coverage, SignedExecutionContext,
@@ -363,6 +363,8 @@ class InvariansClient:
 
         def parse_l1(raw: dict) -> L1Entry:
             struct = raw.get("structural", {}) or {}
+            struct_slow = raw.get("structural_slow", {}) or {}
+            shifts_raw = raw.get("shifts", {}) or {}
             profile = raw.get("execution_profile", {}) or {}
             chain = raw.get("chain", "")
             return L1Entry(
@@ -376,6 +378,14 @@ class InvariansClient:
                     rhythm_ratio=struct.get("rhythm_ratio") or 0.0,
                     continuity_ratio=struct.get("continuity_ratio") or 0.0,
                 ),
+                structural_slow=StructuralSlow(
+                    rhythm_ratio_slow=struct_slow.get("rhythm_ratio_slow"),
+                    continuity_ratio_slow=struct_slow.get("continuity_ratio_slow"),
+                ) if struct_slow else None,
+                shifts=Shifts(
+                    rhythm_shift=shifts_raw.get("rhythm_shift"),
+                    continuity_shift=shifts_raw.get("continuity_shift"),
+                ) if shifts_raw else None,
                 execution_profile=ExecutionProfile(
                     index_a=profile.get("index_a") or 0.0,
                     index_b=profile.get("index_b") or 0.0,
@@ -386,6 +396,8 @@ class InvariansClient:
 
         def parse_l2(raw: dict) -> L2Entry:
             struct = raw.get("structural", {}) or {}
+            struct_slow = raw.get("structural_slow", {}) or {}
+            shifts_raw = raw.get("shifts", {}) or {}
             profile = raw.get("execution_profile", {}) or {}
             chain = raw.get("chain", "")
             return L2Entry(
@@ -398,6 +410,14 @@ class InvariansClient:
                     rhythm_ratio=struct.get("rhythm_ratio") or 0.0,
                     continuity_ratio=struct.get("continuity_ratio") or 0.0,
                 ),
+                structural_slow=StructuralSlow(
+                    rhythm_ratio_slow=struct_slow.get("rhythm_ratio_slow"),
+                    continuity_ratio_slow=struct_slow.get("continuity_ratio_slow"),
+                ) if struct_slow else None,
+                shifts=Shifts(
+                    rhythm_shift=shifts_raw.get("rhythm_shift"),
+                    continuity_shift=shifts_raw.get("continuity_shift"),
+                ) if shifts_raw else None,
                 execution_profile=ExecutionProfile(
                     index_a=profile.get("index_a") or 0.0,
                     index_b=profile.get("index_b") or 0.0,

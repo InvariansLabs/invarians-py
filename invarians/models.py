@@ -99,6 +99,24 @@ class StructuralSignals:
 
 
 @dataclass
+class StructuralSlow:
+    """Long-term EMA baseline (~30-day memory). Compared to current ratios via Shifts."""
+    rhythm_ratio_slow: Optional[float] = None
+    continuity_ratio_slow: Optional[float] = None
+
+
+@dataclass
+class Shifts:
+    """Delta between short-term EMA (~10h) and long-term EMA (~30d).
+    Positive shift = chain drifting above its 30d baseline.
+    Negative shift = chain converging toward or below its 30d baseline.
+    Captures structural drift over time (the "nominal not fixed" thesis).
+    """
+    rhythm_shift: Optional[float] = None
+    continuity_shift: Optional[float] = None
+
+
+@dataclass
 class ExecutionProfile:
     """σ/π signal indices. index_a=sigma_ratio, index_b=size_ratio, index_c=tx_ratio."""
     index_a: float                   # σ computational load (sigma_ratio)
@@ -246,6 +264,8 @@ class L1Entry:
     divergence_index: Optional[float]
     structural: StructuralSignals
     execution_profile: ExecutionProfile
+    structural_slow: Optional[StructuralSlow] = None  # API v1.1.0+
+    shifts: Optional[Shifts] = None                   # API v1.1.0+
     meta: Optional[ChainMeta] = None      # enriched by SDK
 
 
@@ -259,6 +279,8 @@ class L2Entry:
     window: str                           # "1h"
     structural: StructuralSignals
     execution_profile: ExecutionProfile
+    structural_slow: Optional[StructuralSlow] = None  # API v1.1.0+
+    shifts: Optional[Shifts] = None                   # API v1.1.0+
     meta: Optional[ChainMeta] = None
 
 
