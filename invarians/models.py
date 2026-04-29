@@ -8,7 +8,19 @@ from typing import Optional, Literal
 # Types
 # ──────────────────────────────────────────────────────────────
 
-Regime = Literal["S1D1", "S1D2", "S2D1", "S2D2"]
+# Regime codes
+#   Phase α (current default, all chains): 4 legacy values (S1D1, S1D2, S2D1, S2D2)
+#   Phase β (per-chain activation after event-based calibration): extended bilateral codes
+#     L1 (multi-dim demand): 12 values total — adds S1D2+/-/±, S2+D1, S2-D1, S2+D2+/-/±, S2-D2+/-/±
+#     L2 (single-dim demand): 9 values total — same as L1 minus the D2± variants
+# See https://invarians.com/blog/nominal-not-fixed.html and calibration_log.md Entry #030+.
+Regime = Literal[
+    "S1D1",   "S1D2",   "S2D1",   "S2D2",
+    "S1D2+",  "S1D2-",  "S1D2±",
+    "S2+D1",  "S2-D1",
+    "S2+D2+", "S2+D2-", "S2+D2±",
+    "S2-D2+", "S2-D2-", "S2-D2±",
+]
 BridgeState = Literal["BS1", "BS2"]                 # native bridges
 CcipState   = Literal["CS1", "CS2"]                 # CCIP lanes (calibrated ≥ P3)
 CctpState   = Literal["TS1", "TS2"]                 # CCTP routes (calibrated ≥ P3)

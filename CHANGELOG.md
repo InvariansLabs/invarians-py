@@ -1,5 +1,38 @@
 # Changelog — invarians-py
 
+## 0.3.1 — 2026-04-29 — Bilateral regime codes (phase β)
+
+- **`Regime` Literal extended from 4 to 15 values** to support the bilateral regime codes
+  emitted by the panel API since v1.1.0:
+  - L1 phase α legacy (still emitted on SOL, AVAX): `S1D1`, `S1D2`, `S2D1`, `S2D2`
+  - L1 phase β extended (active on ETH, POL since 2026-04-29):
+    - direction on demand axis: `S1D2+`, `S1D2-`, `S1D2±`
+    - direction on structure axis: `S2+D1`, `S2-D1`
+    - combined: `S2+D2+`, `S2+D2-`, `S2+D2±`, `S2-D2+`, `S2-D2-`, `S2-D2±`
+  - L2 phase β extended (active on BASE, OP since 2026-04-29 — no `D2±` on single-dim demand):
+    `S1D2+`, `S1D2-`, `S2+D1`, `S2-D1`, `S2+D2+`, `S2+D2-`, `S2-D2+`, `S2-D2-`
+  - ARB stays phase α (sigma_ratio structurally degenerate on Arbitrum Nitro).
+- Behaviour: clients on 0.3.x are forward-compatible with phase β codes. Generic clients
+  doing a regex match on the legacy 4 values must update to support the 15 values.
+- No breaking changes. Backward-compatible additive Literal expansion.
+
+---
+
+## 0.3.0 — 2026-04-29 — Long-term EMA + shifts (API v1.1.0)
+
+- **New `StructuralSlow` dataclass** exposing `rhythm_ratio_slow` and `continuity_ratio_slow`
+  (~30-day EMA baseline) on L1 and L2 entries.
+- **New `Shifts` dataclass** exposing `rhythm_shift` and `continuity_shift` (delta between
+  short-term ~10h and long-term ~30d EMAs) — captures structural drift over time. Validates
+  the article thesis "what is nominal is not fixed" published 2026-04-28.
+- `L1Entry.structural_slow`, `L1Entry.shifts`, `L2Entry.structural_slow`, `L2Entry.shifts`
+  added as `Optional` fields with default `None`. Backward-compatible with v1.0.x API.
+- `parse_l1` / `parse_l2` populate the new fields when present in the API response.
+- API version 1.1.0 is fully supported; v1.0.x clients reading 1.1.0 responses ignore the
+  new fields silently.
+
+---
+
 ## 0.2.1 — 2026-04-20 — README sync
 
 - **README rewritten for Panel API.** The 0.2.0 release shipped with the legacy 0.1.x README
