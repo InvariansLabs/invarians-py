@@ -1,5 +1,15 @@
 # Changelog — invarians-py
 
+## 0.6.1 — 2026-05-04 — README rewrite for v2.0 panel
+
+### Changed
+
+- README rewritten end-to-end to reflect the v2.0 panel API. Replaces every code sample using `get_panel()` / `verify_panel()` with `get_panel_v2()` / `verify_panel_v2()`. Documents the three primitives (Attestation, Regime, Shift) explicitly. Lists the 12 signed regime codes per chain. Updates the chain coverage table and the bridge calibration timeline.
+
+No code change in this release. Behaviour identical to 0.6.0.
+
+---
+
 ## 0.6.0 — 2026-05-04 — Hardened API endpoint, v1.0 methods removed
 
 **BREAKING release. Migrates the SDK to the hardened production endpoint at `https://api.invarians.com` (Cloudflare Worker proxy with origin checks, timeouts, server-side credentials). Removes the v1.0 panel methods, which were deprecated since v0.5.0.**
