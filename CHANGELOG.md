@@ -1,5 +1,73 @@
 # Changelog — invarians-py
 
+## 0.6.0 — 2026-05-04 — Hardened API endpoint, v1.0 methods removed
+
+**BREAKING release. Migrates the SDK to the hardened production endpoint at `https://api.invarians.com` (Cloudflare Worker proxy with origin checks, timeouts, server-side credentials). Removes the v1.0 panel methods, which were deprecated since v0.5.0.**
+
+### Changed
+
+- **`DEFAULT_BASE_URL`** now points to `https://api.invarians.com` (was the raw Supabase Edge Functions URL). The new endpoint forwards to the same backend through a hardened proxy and exposes only `/v2/panel` and `/v2/verify`.
+
+### Removed
+
+- **`get_panel()`** (v1.0 panel) now raises `NotImplementedError`. Use `get_panel_v2(include='diagnostic')`.
+- **`verify_panel()`** (v1.0 verify) now raises `NotImplementedError`. Use `verify_panel_v2(panel_payload, signature)`.
+
+### Migration
+
+```python
+# Before (v0.5.x)
+panel = client.get_panel(chains=['ethereum'])
+ok = client.verify_panel(panel_dict, signature)
+
+# After (v0.6.0)
+panel = client.get_panel_v2(chains=['ethereum'], include='diagnostic')
+ok = client.verify_panel_v2(panel_dict, signature)
+```
+
+The v2.0 panel returns the three primitives (Attestation, Regime, Shift) with axis-grouped metric blocks, beacon participation on Ethereum, sequencer publish latency on L2 chains, and per-axis composite drift. v1.0 had only the regime + structural ratio.
+
+---
+
+## 0.5.0 — 2026-04-30 — Panel API v2.0 client (three primitives: Attestation + Regime + Shift)
+
+**MAJOR release. Adds support for `GET /attestation/v2/panel` and `POST /attestation/v2/verify` while keeping v1.0.x methods intact for backward compatibility.**
+
+### Added
+
+- **`get_panel_v2(chains, bridges, include)`** : new client method. `include` accepts `"core"` (default), `"diagnostic"`, or `"full"`.
+- **`verify_panel_v2(panel_payload, signature)`** : verify HMAC of v2.0 payload.
+- **New dataclasses** :
+  - `MetricBlock` : per-metric block with `ratio`, `ratio_long`, `shift`, `shift_delta`, `shift_magnitude_delta`, plus optional `epoch` (beacon) / `seconds` (sequencer_publish_latency). Helpers `is_drifting_away`, `is_reverting`.
+  - `V2Drift` : composite drift per axis with magnitude + delta + magnitude_delta.
+  - `V2L1Structural`, `V2L1Demand`, `V2L1Entry` : axis-grouped L1 entry. ETH-only `beacon_participation` field on structural axis.
+  - `V2L2Structural`, `V2L2Demand`, `V2L2Entry` : axis-grouped L2 entry with `sequencer_publish_latency` (3rd structural axis), `complexity` and `gas_complexity` (extra demand observables).
+  - `V2Coverage` : like `Coverage` plus `include_mode` field.
+  - `V2PanelResponse` : full response with `l1_by_chain`, `l2_by_chain`, `bridge_by_id` accessors.
+  - `IncludeMode` : `Literal["core", "diagnostic", "full"]`.
+
+### Spec
+
+API v2.0 spec : `research/api/V2_SPEC.md` (in invarians-docs repo). Three primitives :
+1. **Attestation** (HMAC integrity envelope) — same as v1.x
+2. **Regime** (SxDx classification) — 12 codes per chain via signed grid
+3. **Shift** (drift signal) — per-metric `shift` (current deviation), `shift_delta` (raw value direction), `shift_magnitude_delta` (deviation growing or shrinking)
+
+### Trend reading rules
+
+For an agent making a decision in an active regime :
+- `shift_magnitude_delta > 0` → deviation amplifying, regime persists or worsens
+- `shift_magnitude_delta < 0` → deviation shrinking, regime exit toward nominal likely
+- `shift_magnitude_delta ≈ 0` → regime stable
+
+### Backward compatibility
+
+- v1.0.x methods (`get_panel`, `verify_panel`) unchanged. Deprecated 60 days after v2.0 endpoint launch.
+- v1.x clients continue to work without modification.
+- Migration : replace `client.get_panel()` with `client.get_panel_v2(include="diagnostic")` to access shift signals.
+
+---
+
 ## 0.3.1 — 2026-04-29 — Bilateral regime codes (phase β)
 
 - **`Regime` Literal extended from 4 to 15 values** to support the bilateral regime codes

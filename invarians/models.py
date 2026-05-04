@@ -253,7 +253,7 @@ class ExecutionContextAttestation:
 # PANEL API (v1.0 — 2026-04-20 — pivot panel-based)
 # ──────────────────────────────────────────────────────────────
 #
-# GET /attestation/panel returns a panel of independent L1/L2/bridge states.
+# GET /v2/panel returns a panel of independent L1/L2/bridge states.
 # The AI agent composes its routes client-side. No direction in the API.
 #
 # Bridge IDs are canonical: "{chainA}-{chainB}/{type}", sorted alphabetically
@@ -375,7 +375,7 @@ class SignedExecutionContext:
 
 @dataclass
 class PanelResponse:
-    """Full response from GET /attestation/panel."""
+    """Full response from the legacy v1.0 panel endpoint (kept for import compatibility)."""
     version: str                          # "1.0.0"
     oracle_status: OracleStatusV1         # "OK" | "DEGRADED"
     issued_at: str
@@ -406,6 +406,211 @@ class PanelResponse:
     @property
     def is_fully_ok(self) -> bool:
         """True if all items report OK (not STALE/UNAVAILABLE/UNCALIBRATED)."""
+        return (
+            all(e.status == "OK" for e in self.l1)
+            and all(e.status == "OK" for e in self.l2)
+            and all(b.status == "OK" for b in self.bridges)
+        )
+
+
+# ──────────────────────────────────────────────────────────────
+# PANEL API v2.0 (2026-04-30 — three primitives)
+# ──────────────────────────────────────────────────────────────
+#
+# v2.0 spec: research/api/V2_SPEC.md
+#
+# Three primitives in one signed payload :
+#   1. Attestation (HMAC) — integrity envelope
+#   2. Regime (SxDx) — substrate state classification
+#   3. Shift (drift signal) — per-metric trend signal for fitness-for-action
+#
+# Layout: per-chain entries grouped by axis (structural / demand). Each metric
+# is a self-contained block with ratio + ratio_long + shift + shift_delta
+# + shift_magnitude_delta in diagnostic mode, ratio only in core mode.
+#
+# Tiered exposure: ?include=core (default) | diagnostic | full
+
+IncludeMode = Literal["core", "diagnostic", "full"]
+
+
+@dataclass
+class MetricBlock:
+    """Per-metric block. In core mode only `ratio` is populated.
+
+    In diagnostic mode (or full), the block also contains :
+      - `ratio_long`            : long-EMA reference (~30d window)
+      - `shift`                 : current deviation = ratio - ratio_long
+      - `shift_delta`           : direction of value movement = shift_now - shift_prev
+      - `shift_magnitude_delta` : whether deviation is growing or shrinking
+                                  = |shift_now| - |shift_prev|
+
+    For new structural observables (beacon_participation, sequencer_publish_latency),
+    `shift_available` is False during the slow-EMA pre-stabilization period.
+
+    Optional auxiliary fields :
+      - `epoch`   (beacon_participation only) : current Beacon Chain epoch
+      - `seconds` (sequencer_publish_latency only) : raw observed latency
+    """
+    ratio: Optional[float]
+    ratio_long: Optional[float] = None
+    shift: Optional[float] = None
+    shift_delta: Optional[float] = None
+    shift_magnitude_delta: Optional[float] = None
+    shift_available: Optional[bool] = None
+    epoch: Optional[int] = None
+    seconds: Optional[float] = None
+
+    @property
+    def is_drifting_away(self) -> bool:
+        """True if deviation is amplifying (regime persists or worsens).
+
+        Returns False if shift_magnitude_delta is unavailable.
+        """
+        if self.shift_magnitude_delta is None:
+            return False
+        return self.shift_magnitude_delta > 0
+
+    @property
+    def is_reverting(self) -> bool:
+        """True if deviation is shrinking (regime exit toward nominal likely)."""
+        if self.shift_magnitude_delta is None:
+            return False
+        return self.shift_magnitude_delta < 0
+
+
+@dataclass
+class V2Drift:
+    """Composite drift signal per axis.
+
+    Each axis exposes :
+      - `<axis>`                    : magnitude (max |shift| over classifying observables)
+      - `<axis>_delta`              : raw direction of value movement of the metric attaining max
+      - `<axis>_magnitude_delta`    : deviation growing/shrinking on the metric attaining max
+
+    Reading guide (initial heuristic, refined by empirical backtest) :
+      |drift| < 0.005 : substrate stable, regime persists
+      0.005 - 0.02    : mild drift, transition within hours possible
+      0.02 - 0.05     : active drift, vigilance recommended
+      > 0.05          : imminent transition probable (~10-30 min horizon)
+    """
+    structural: Optional[float]
+    structural_delta: Optional[float]
+    structural_magnitude_delta: Optional[float]
+    demand: Optional[float]
+    demand_delta: Optional[float]
+    demand_magnitude_delta: Optional[float]
+
+
+@dataclass
+class V2L1Structural:
+    """L1 structural axis observables. Beacon participation Ethereum-only."""
+    rhythm: MetricBlock
+    continuity: MetricBlock
+    beacon_participation: Optional[MetricBlock] = None  # Ethereum only
+
+
+@dataclass
+class V2L1Demand:
+    """L1 demand axis observables."""
+    sigma: MetricBlock
+    size: MetricBlock
+    tx: MetricBlock
+
+
+@dataclass
+class V2L1Entry:
+    """L1 chain state in the v2.0 panel."""
+    chain: str
+    regime: Optional[Regime]
+    status: ItemStatus
+    computed_at: Optional[str]
+    structural: V2L1Structural
+    demand: V2L1Demand
+    drift: V2Drift
+    calibration_eta: Optional[str] = None
+    meta: Optional[ChainMeta] = None  # enriched by SDK
+
+
+@dataclass
+class V2L2Structural:
+    """L2 structural axis. sequencer_publish_latency added in v2.0."""
+    rhythm: MetricBlock
+    continuity: MetricBlock
+    sequencer_publish_latency: MetricBlock
+
+
+@dataclass
+class V2L2Demand:
+    """L2 demand axis: 5 observables."""
+    sigma: MetricBlock
+    size: MetricBlock
+    tx: MetricBlock
+    complexity: MetricBlock
+    gas_complexity: MetricBlock
+
+
+@dataclass
+class V2L2Entry:
+    """L2 chain state in the v2.0 panel."""
+    chain: str
+    regime: Optional[Regime]
+    status: ItemStatus
+    computed_at: Optional[str]
+    structural: V2L2Structural
+    demand: V2L2Demand
+    drift: V2Drift
+    meta: Optional[ChainMeta] = None
+
+
+@dataclass
+class V2Coverage:
+    l1_chains: list[str]
+    l2_chains: list[str]
+    bridges_native: int
+    bridges_ccip: int
+    bridges_cctp: int
+    include_mode: str
+    methodology_url: str
+
+
+@dataclass
+class V2PanelResponse:
+    """Full response from GET /v2/panel.
+
+    Three primitives accessible via the entry objects :
+      - Attestation : `.signed_execution_context.signature` + `.payload_hash`
+      - Regime     : `.l1[].regime` and `.l2[].regime` (12 codes)
+      - Shift      : `.l1[].drift` and `.l2[].drift` plus per-metric `.shift_*`
+    """
+    version: str
+    oracle_status: OracleStatusV1
+    issued_at: str
+    l1: list[V2L1Entry]
+    l2: list[V2L2Entry]
+    bridges: list[BridgeEntry]
+    coverage: V2Coverage
+    signed_execution_context: SignedExecutionContext
+
+    def l1_by_chain(self, chain: str) -> Optional[V2L1Entry]:
+        for e in self.l1:
+            if e.chain == chain:
+                return e
+        return None
+
+    def l2_by_chain(self, chain: str) -> Optional[V2L2Entry]:
+        for e in self.l2:
+            if e.chain == chain:
+                return e
+        return None
+
+    def bridge_by_id(self, bridge_id: str) -> Optional[BridgeEntry]:
+        for b in self.bridges:
+            if b.id == bridge_id:
+                return b
+        return None
+
+    @property
+    def is_fully_ok(self) -> bool:
         return (
             all(e.status == "OK" for e in self.l1)
             and all(e.status == "OK" for e in self.l2)

@@ -26,11 +26,14 @@ from .models import (
     chain_meta, stale_action,
     # Panel API v1.0 (2026-04-20)
     PanelResponse, L1Entry, L2Entry, BridgeEntry, Coverage, SignedExecutionContext,
+    # Panel API v2.0 (2026-04-30)
+    V2PanelResponse, V2L1Entry, V2L2Entry, V2L1Structural, V2L1Demand,
+    V2L2Structural, V2L2Demand, V2Drift, V2Coverage, MetricBlock, IncludeMode,
 )
 
 logger = logging.getLogger("invarians")
 
-DEFAULT_BASE_URL = "https://sdpilypwumxsyyipceew.supabase.co/functions/v1/attestation"
+DEFAULT_BASE_URL = "https://api.invarians.com"
 
 # Retry defaults
 DEFAULT_MAX_RETRIES = 3
@@ -85,46 +88,72 @@ class InvariansClient:
         chains: Optional[list] = None,
         bridges: Optional[list] = None,
     ) -> PanelResponse:
-        """
-        Fetch the full attestation panel (L1 states, L2 states, bridge states).
+        """DEPRECATED — Panel API v1.0 removed. Use ``get_panel_v2()``."""
+        raise NotImplementedError(
+            "get_panel() is deprecated since v0.6.0. "
+            "Use client.get_panel_v2(include='diagnostic') for the v2.0 panel API."
+        )
 
-        The panel is direction-agnostic: the agent composes its routes
-        client-side by picking L1/L2/bridge items from the panel.
+    def verify_panel(self, panel_payload: dict, signature: str) -> bool:
+        """DEPRECATED — Panel API v1.0 removed. Use ``verify_panel_v2()``."""
+        raise NotImplementedError(
+            "verify_panel() is deprecated since v0.6.0. "
+            "Use client.verify_panel_v2(panel_payload, signature) for the v2.0 verify endpoint."
+        )
+
+    # ── Panel API v2.0 (2026-04-30) ─────────────────────────────
+    def get_panel_v2(
+        self,
+        chains: Optional[list] = None,
+        bridges: Optional[list] = None,
+        include: str = "core",
+    ) -> V2PanelResponse:
+        """
+        Fetch the v2.0 attestation panel with three primitives :
+          - Attestation (HMAC integrity)
+          - Regime (SxDx classification, 12 codes per chain)
+          - Shift (drift signal: ratio, ratio_long, shift_delta, shift_magnitude_delta)
 
         Args:
-            chains:  Optional filter — e.g. ['ethereum','arbitrum','base']
-            bridges: Optional filter by bridge type — e.g. ['native'] or ['native','ccip']
+            chains:  Optional filter — e.g. ['ethereum','arbitrum']
+            bridges: Optional filter by bridge type — e.g. ['native','ccip']
+            include: 'core' (default) | 'diagnostic' | 'full'
+              core       — only `ratio` per metric (decision-grade payload)
+              diagnostic — adds ratio_long + shift + shift_delta + shift_magnitude_delta
+              full       — adds raw EMA baselines (research / debugging)
 
         Returns:
-            PanelResponse with l1[], l2[], bridges[], coverage, and
-            signed_execution_context (payload_hash + HMAC signature + anchor slot).
+            V2PanelResponse with axis-grouped metric blocks and composite drift
+            per axis. Always exposes `drift` regardless of include mode.
+
+        Spec: https://github.com/InvariansLabs/invarians-py/blob/main/V2_SPEC.md
         """
-        params: dict = {}
+        if include not in ("core", "diagnostic", "full"):
+            raise ValueError(f"include must be 'core'|'diagnostic'|'full', got {include!r}")
+
+        params: dict = {"include": include}
         if chains:
             params["chains"] = ",".join(chains)
         if bridges:
             params["bridges"] = ",".join(bridges)
-        data = self._get("/panel", params=params or None)
-        return self._parse_panel(data)
+        data = self._get("/v2/panel", params=params)
+        return self._parse_panel_v2(data)
 
-    def verify_panel(self, panel_payload: dict, signature: str) -> bool:
+    def verify_panel_v2(self, panel_payload: dict, signature: str) -> bool:
         """
-        Verify the HMAC signature of a panel payload.
+        Verify the HMAC signature of a v2.0 panel payload.
 
         The verify endpoint recomputes the HMAC over the canonical JSON of the
         panel payload (with `signed_execution_context` stripped) and compares.
 
         Args:
-            panel_payload: The full panel dict as received from /panel.
-                           The `signed_execution_context` field is stripped
-                           server-side before recomputing the HMAC.
-            signature:     The signature string to verify, e.g.
-                           "hmac-sha256:{hex}" from payload's signed_execution_context.
+            panel_payload: The full panel dict as received from /v2/panel.
+            signature:     The signature string (e.g. "hmac-sha256:{hex}").
 
         Returns:
             True if the signature matches.
         """
-        resp = self._post("/verify", json={"payload": panel_payload, "signature": signature})
+        resp = self._post("/v2/verify", json={"payload": panel_payload, "signature": signature})
         return resp.get("valid", False)
 
     # ── Deprecated API (410 Gone since 2026-04-20) ─────────────
@@ -481,6 +510,141 @@ class InvariansClient:
             l1=[parse_l1(e) for e in panel_raw.get("l1", [])],
             l2=[parse_l2(e) for e in panel_raw.get("l2", [])],
             bridges=[parse_bridge(b) for b in panel_raw.get("bridges", [])],
+            coverage=coverage,
+            signed_execution_context=sec,
+        )
+
+    # ──────────────────────────────────────────────────────────
+    # Panel API v2.0 parser (2026-04-30 — three primitives)
+    # ──────────────────────────────────────────────────────────
+
+    def _parse_panel_v2(self, data: dict) -> V2PanelResponse:
+        panel_raw = data.get("panel", {}) or {}
+
+        def parse_metric(raw: Optional[dict]) -> MetricBlock:
+            r = raw or {}
+            return MetricBlock(
+                ratio=r.get("ratio"),
+                ratio_long=r.get("ratio_long"),
+                shift=r.get("shift"),
+                shift_delta=r.get("shift_delta"),
+                shift_magnitude_delta=r.get("shift_magnitude_delta"),
+                shift_available=r.get("shift_available"),
+                epoch=r.get("epoch"),
+                seconds=r.get("seconds"),
+            )
+
+        def parse_drift(raw: Optional[dict]) -> V2Drift:
+            d = raw or {}
+            return V2Drift(
+                structural=d.get("structural"),
+                structural_delta=d.get("structural_delta"),
+                structural_magnitude_delta=d.get("structural_magnitude_delta"),
+                demand=d.get("demand"),
+                demand_delta=d.get("demand_delta"),
+                demand_magnitude_delta=d.get("demand_magnitude_delta"),
+            )
+
+        def parse_l1_v2(raw: dict) -> V2L1Entry:
+            chain = raw.get("chain", "")
+            structural = raw.get("structural", {}) or {}
+            demand = raw.get("demand", {}) or {}
+            beacon_raw = structural.get("beacon_participation")
+            return V2L1Entry(
+                chain=chain,
+                regime=raw.get("regime"),
+                status=raw.get("status", "UNAVAILABLE"),
+                computed_at=raw.get("computed_at"),
+                structural=V2L1Structural(
+                    rhythm=parse_metric(structural.get("rhythm")),
+                    continuity=parse_metric(structural.get("continuity")),
+                    beacon_participation=parse_metric(beacon_raw) if beacon_raw is not None else None,
+                ),
+                demand=V2L1Demand(
+                    sigma=parse_metric(demand.get("sigma")),
+                    size=parse_metric(demand.get("size")),
+                    tx=parse_metric(demand.get("tx")),
+                ),
+                drift=parse_drift(raw.get("drift")),
+                calibration_eta=raw.get("calibration_eta"),
+                meta=chain_meta(chain) if chain else None,
+            )
+
+        def parse_l2_v2(raw: dict) -> V2L2Entry:
+            chain = raw.get("chain", "")
+            structural = raw.get("structural", {}) or {}
+            demand = raw.get("demand", {}) or {}
+            return V2L2Entry(
+                chain=chain,
+                regime=raw.get("regime"),
+                status=raw.get("status", "UNAVAILABLE"),
+                computed_at=raw.get("computed_at"),
+                structural=V2L2Structural(
+                    rhythm=parse_metric(structural.get("rhythm")),
+                    continuity=parse_metric(structural.get("continuity")),
+                    sequencer_publish_latency=parse_metric(structural.get("sequencer_publish_latency")),
+                ),
+                demand=V2L2Demand(
+                    sigma=parse_metric(demand.get("sigma")),
+                    size=parse_metric(demand.get("size")),
+                    tx=parse_metric(demand.get("tx")),
+                    complexity=parse_metric(demand.get("complexity")),
+                    gas_complexity=parse_metric(demand.get("gas_complexity")),
+                ),
+                drift=parse_drift(raw.get("drift")),
+                meta=chain_meta(chain) if chain else None,
+            )
+
+        # Bridges share v1 schema in v2.0 (no change)
+        def parse_bridge_v2(raw: dict) -> BridgeEntry:
+            return BridgeEntry(
+                id=raw.get("id", ""),
+                endpoints=list(raw.get("endpoints", []) or []),
+                type=raw.get("type", "native"),
+                state=raw.get("state"),
+                calibrated=bool(raw.get("calibrated", False)),
+                status=raw.get("status", "UNAVAILABLE"),
+                observed_at=raw.get("observed_at"),
+                window=raw.get("window", "10m"),
+                last_batch_age_seconds=raw.get("last_batch_age_seconds"),
+                last_sequence_advance_seconds=raw.get("last_sequence_advance_seconds"),
+                sequence_gap=raw.get("sequence_gap"),
+                commit_latency_p90_s=raw.get("commit_latency_p90_s"),
+                execute_latency_p90_s=raw.get("execute_latency_p90_s"),
+                total_latency_p90_s=raw.get("total_latency_p90_s"),
+                rmn_cursed=raw.get("rmn_cursed"),
+                attestation_latency_p90_s=raw.get("attestation_latency_p90_s"),
+                attestation_latency_p99_s=raw.get("attestation_latency_p99_s"),
+                attestation_success_rate_1h=raw.get("attestation_success_rate_1h"),
+                circle_api_status=raw.get("circle_api_status"),
+            )
+
+        cov_raw = data.get("coverage", {}) or {}
+        coverage = V2Coverage(
+            l1_chains=list(cov_raw.get("l1_chains", []) or []),
+            l2_chains=list(cov_raw.get("l2_chains", []) or []),
+            bridges_native=int(cov_raw.get("bridges_native", 0) or 0),
+            bridges_ccip=int(cov_raw.get("bridges_ccip", 0) or 0),
+            bridges_cctp=int(cov_raw.get("bridges_cctp", 0) or 0),
+            include_mode=cov_raw.get("include_mode", "core"),
+            methodology_url=cov_raw.get("methodology_url", ""),
+        )
+
+        sec_raw = data.get("signed_execution_context", {}) or {}
+        sec = SignedExecutionContext(
+            payload_hash=sec_raw.get("payload_hash", ""),
+            signature=sec_raw.get("signature", ""),
+            key_id=sec_raw.get("key_id", "invarians-v1"),
+            anchor=sec_raw.get("anchor"),
+        )
+
+        return V2PanelResponse(
+            version=data.get("version", "2.0.0"),
+            oracle_status=data.get("oracle_status", "OK"),
+            issued_at=data.get("issued_at", ""),
+            l1=[parse_l1_v2(e) for e in panel_raw.get("l1", []) or []],
+            l2=[parse_l2_v2(e) for e in panel_raw.get("l2", []) or []],
+            bridges=[parse_bridge_v2(b) for b in panel_raw.get("bridges", []) or []],
             coverage=coverage,
             signed_execution_context=sec,
         )
